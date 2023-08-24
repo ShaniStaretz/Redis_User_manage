@@ -3,6 +3,7 @@ require('dotenv').config();
 const session = require('express-session');
 const { redis, createClient } = require('redis');
 const RedisStore = require('connect-redis').default;
+const { authMiddleware } = require('./redisMiddleware');
 var bodyParser = require('body-parser');
 
 const app = express();
@@ -18,7 +19,6 @@ const redisClient = createClient({
 	}
 });
 
-// const res=await redisClient.connect()
 redisClient.on('error', (err) => {
 	console.log('on error', err);
 });
@@ -43,7 +43,8 @@ redisClient
 	.catch((err) => {
 		console.console.error('error in connect:', err);
 	});
-// Configure session middleware
+
+
 app.use(
 	session({
 		store: new RedisStore({ client: redisClient }),
@@ -53,48 +54,54 @@ app.use(
 		cookie: {
 			secure: false, // if true only transmit cookie over https
 			httpOnly: false, // if true prevent client side JS from reading the cookie
-			maxAge: 1000 * 60 * 60 // session max age in miliseconds
+			maxAge: 1000 * 60 * 60 * 60 // session max age in miliseconds
 		}
-	})
+	}) // Continue with session management
 );
 
 // Sample user data
 const users = [ { username: 'shani', password: 'pass1' }, { username: 'user2', password: 'pass2' } ];
 
-app.get('/', (req, res) => {
+app.get('/', authMiddleware, (req, res) => {
 	const session = req.session;
-	console.log(session);
-	// req.session.visitCount = req.session.visitCount ? req.session.visitCount + 1 : 1;
-	if (session.username) {
-		if (session.username) {
-			res.write(`<h1>Welcome ${session.username} </h1><br>`);
-			res.write(`<h3>This is the Home page</h3>`);
-			res.end('<a href=' + '/logout' + '>Click here to log out</a >');
-		}
+	if (!session.allowAccess && session.username) {
+		res.write(`<h1>hi ${session.username} </h1><br>`);
+		res.write(`<h3>You are blocked from the system, and need to await 5 minutes</h3>`);
+		res.end('<a href=' + '/logout' + '>Click here to log out</a >');
+	} else if (session && session.username) {
+		res.write(`<h1>Welcome ${session.username} </h1><br>`);
+		res.write(`<h3>This is the Home page</h3>`);
+		res.end('<a href=' + '/logout' + '>Click here to log out</a >');
+		// }
 	} else {
+		console.info('no seesion in route');
 		res.sendFile(__dirname + '/login.html');
 	}
 });
 
 app.post('/login', (req, res) => {
-	// const session = req.session;
-	// session.username = username;
+	try {
+		const session = req.session;
+		console.log('recieve login request');
+		const { username } = req.body;
+		const user = users.find((u) => u.username === username);
 
-	console.log('recieve login request');
-	const { username } = req.body;
-	const user = users.find((u) => u.username === username);
+		if (user) {
+			console.info('found user');
 
-	if (user) {
-		console.log('found user');
-		// const token = jwt.sign(user, 'your_secret_key');
-		// req.session.token = token;
-		req.session.user = user;
-		req.session.username = user.username;
-		res.send('success');
-	} else {
-		return res.redirect('/login');
+			req.session.loggedInTimestemp = new Date().getTime();
+			req.session.username = user.username;
+			res.send('success');
+		} else {
+			throw { status: 404, message: 'failed' };
+		}
+	} catch (error) {
+		console.error(error);
+		if (error.status !== 404) {
+			return res.status(500).send(error.message);
+		}
+		res.status(200).send(error.message);
 	}
-
 	// // Create a JWT token
 
 	// // Store token in the session
@@ -112,11 +119,14 @@ app.get('/dashboard', (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-	req.session.destroy((err) => {
-		if (err) {
-			return console.log(err);
-		}
-		res.redirect('/');
+	console.log(req.session);
+	redisClient.del(req.session.username).then(() => {
+		req.session.destroy((err) => {
+			if (err) {
+				return console.log(err);
+			}
+			res.redirect('/');
+		});
 	});
 });
 

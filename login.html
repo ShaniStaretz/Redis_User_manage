@@ -19,6 +19,10 @@ $.post(
           "/login",
           { username: username },
           function (data) {
+            if(data==='failed'){
+              alert("user doesn't exist,try again");
+              $("#username").val()=''
+            }
             if (data === "success") {
               window.location.href = "/";
             }
